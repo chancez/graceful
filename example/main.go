@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -12,63 +11,56 @@ import (
 	"github.com/ecnahc515/graceful"
 )
 
+func accept(l net.Listener, die chan struct{}) {
+	for {
+		select {
+		case <-die:
+			return
+		default:
+			conn, err := l.Accept()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			// echo data back
+			go func(c net.Conn) {
+				io.Copy(c, c)
+				c.Close()
+			}(conn)
+		}
+	}
+}
+
 func main() {
 	sigChan := make(chan os.Signal)
 	die := make(chan struct{}, 1)
 	signal.Notify(sigChan, syscall.SIGUSR2, syscall.SIGINT, syscall.SIGKILL)
+	files := graceful.NewListenerFiles()
 	defer func() {
+		log.Println("Exiting")
 		close(sigChan)
 		close(die)
-		graceful.CloseAll()
+		files.CloseAll()
 	}()
 
 	for {
-		fmt.Println("new graceful")
-		l, err := graceful.NewGracefulListener("tcp", ":8080")
+		l, err := graceful.NewGracefulListener("tcp", ":8080", files)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		fmt.Println("go listener")
-		go func() {
-			log.Println("Listening")
-			for {
-				select {
-				case <-die:
-					fmt.Println("told to this listener to die")
-					return
-				default:
-					conn, err := l.Accept()
-					if err != nil {
-						log.Fatal(err)
-					}
+		log.Println("Accepting connections")
+		go accept(l, die)
 
-					log.Println("accepted conn", conn)
-					go func(c net.Conn) {
-						io.Copy(c, c)
-						c.Close()
-					}(conn)
-				}
+		sig := <-sigChan
+		if sig == syscall.SIGUSR2 {
+			err = l.Close()
+			die <- struct{}{}
+			if err != nil {
+				log.Fatal("error closing", err)
 			}
-		}()
-
-		fmt.Println("before sig for")
-		for {
-			sig := <-sigChan
-			fmt.Println("got a signal", sig)
-			if sig == syscall.SIGUSR2 {
-				fmt.Println("closing")
-				err := l.Close()
-				if err != nil {
-					fmt.Println("error closing", err)
-				}
-				die <- struct{}{}
-				break
-			} else {
-				log.Println("exiting")
-				os.Exit(0)
-			}
+		} else {
+			break
 		}
-		fmt.Println("after sig for")
 	}
 }
