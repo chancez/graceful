@@ -122,7 +122,7 @@ func NewGracefulListener(lnet, laddr string, files *ListenerFiles) (net.Listener
 func (l *GracefulListener) Accept() (c net.Conn, err error) {
 	l.closedMutex.RLock()
 	if l.closed {
-		l.closedMutex.RLock()
+		l.closedMutex.RUnlock()
 		return nil, ErrAlreadyClosed
 	}
 	l.closedMutex.RUnlock()
