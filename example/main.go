@@ -7,60 +7,85 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/ecnahc515/graceful"
 )
 
-func accept(l net.Listener, die chan struct{}) {
+var counter = 0
+
+func accept(l net.Listener, die chan struct{}, done chan struct{}) {
 	for {
 		select {
 		case <-die:
+			log.Println("dying", counter)
+			close(done)
 			return
 		default:
-			conn, err := l.Accept()
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			// echo data back
-			go func(c net.Conn) {
-				io.Copy(c, c)
-				c.Close()
-			}(conn)
 		}
+
+		log.Println("accepting")
+		if gl, ok := l.(*graceful.GracefulListener); ok {
+			if tl, ok := gl.Listener.(*net.TCPListener); ok {
+				log.Println("set deadline")
+				tl.SetDeadline(time.Now().Add(1e9))
+			}
+		} else {
+			log.Println("not graceful")
+		}
+		conn, err := l.Accept()
+		log.Println("done accept")
+		if err != nil {
+			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
+				continue
+			}
+			log.Println(err)
+		}
+
+		// echo data back
+		go func(c net.Conn) {
+			io.Copy(c, c)
+			c.Close()
+		}(conn)
 	}
 }
 
 func main() {
 	sigChan := make(chan os.Signal)
-	die := make(chan struct{}, 1)
 	signal.Notify(sigChan, syscall.SIGUSR2, syscall.SIGINT, syscall.SIGKILL)
 	files := graceful.NewListenerFiles()
 	defer func() {
 		log.Println("Exiting")
 		close(sigChan)
-		close(die)
 		files.CloseAll()
 	}()
 
 	for {
+		log.Println("counter is", counter)
 		l, err := graceful.NewGracefulListener("tcp", ":8080", files)
 		if err != nil {
 			log.Fatal(err)
 		}
 
 		log.Println("Accepting connections")
-		go accept(l, die)
+		die := make(chan struct{})
+		done := make(chan struct{})
+		go accept(l, die, done)
 
 		// Wait for a signal
 		sig := <-sigChan
-		// all signals we close the connection, and stop the accept go routine.
+
+		close(die)
+
+		log.Println("kill")
 		err = l.Close()
 		if err != nil {
-			log.Fatal("error closing", err)
+			log.Println("error closing listener", err)
 		}
-		die <- struct{}{}
+		<-done
+		log.Println("died")
 
+		counter++
 		// if we're not just restarting, exit out the loop and cleanup
 		if sig != syscall.SIGUSR2 {
 			break
