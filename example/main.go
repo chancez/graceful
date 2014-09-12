@@ -52,14 +52,17 @@ func main() {
 		log.Println("Accepting connections")
 		go accept(l, die)
 
+		// Wait for a signal
 		sig := <-sigChan
-		if sig == syscall.SIGUSR2 {
-			err = l.Close()
-			die <- struct{}{}
-			if err != nil {
-				log.Fatal("error closing", err)
-			}
-		} else {
+		// all signals we close the connection, and stop the accept go routine.
+		err = l.Close()
+		if err != nil {
+			log.Fatal("error closing", err)
+		}
+		die <- struct{}{}
+
+		// if we're not just restarting, exit out the loop and cleanup
+		if sig != syscall.SIGUSR2 {
 			break
 		}
 	}
