@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/ecnahc515/graceful"
 	"io"
 	"log"
 	"net"
@@ -48,14 +49,14 @@ func main() {
 		close(sigChan)
 	}()
 
-	l, err := net.Listen("tcp", ":8080")
+	manager := graceful.NewListenerManager()
+	l, err := manager.Listen("tcp", ":8080")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Used to toggle between accepting connections
 	accepting := false
-	// go accept(l, die)
 
 	var die chan struct{}
 
@@ -65,7 +66,7 @@ func main() {
 		log.Println("got signal", sig)
 		if sig == syscall.SIGUSR2 {
 			if accepting {
-				log.Println("closing")
+				log.Println("killing")
 				die <- struct{}{}
 				accepting = false
 			} else {
