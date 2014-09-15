@@ -7,19 +7,27 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-
-	"github.com/ecnahc515/graceful"
+	"time"
 )
 
 func accept(l net.Listener, die chan struct{}) {
 	for {
 		select {
 		case <-die:
+			log.Println("dying")
+			close(die)
 			return
 		default:
+			if tl, ok := l.(*net.TCPListener); ok {
+				tl.SetDeadline(time.Now().Add(time.Second))
+			}
 			conn, err := l.Accept()
 			if err != nil {
-				log.Fatal(err)
+				// Temporary error, just keep going
+				if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
+					continue
+				}
+				log.Fatal("error accepting", err)
 			}
 
 			// echo data back
@@ -33,37 +41,42 @@ func accept(l net.Listener, die chan struct{}) {
 
 func main() {
 	sigChan := make(chan os.Signal)
-	die := make(chan struct{}, 1)
 	signal.Notify(sigChan, syscall.SIGUSR2, syscall.SIGINT, syscall.SIGKILL)
-	files := graceful.NewListenerFiles()
+
 	defer func() {
 		log.Println("Exiting")
 		close(sigChan)
-		close(die)
-		files.CloseAll()
 	}()
 
+	l, err := net.Listen("tcp", ":8080")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Used to toggle between accepting connections
+	accepting := false
+	// go accept(l, die)
+
+	var die chan struct{}
+
 	for {
-		l, err := graceful.NewGracefulListener("tcp", ":8080", files)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		log.Println("Accepting connections")
-		go accept(l, die)
-
-		// Wait for a signal
+		log.Println("waiting for signal")
 		sig := <-sigChan
-		// all signals we close the connection, and stop the accept go routine.
-		err = l.Close()
-		if err != nil {
-			log.Fatal("error closing", err)
-		}
-		die <- struct{}{}
-
-		// if we're not just restarting, exit out the loop and cleanup
-		if sig != syscall.SIGUSR2 {
-			break
+		log.Println("got signal", sig)
+		if sig == syscall.SIGUSR2 {
+			if accepting {
+				log.Println("closing")
+				die <- struct{}{}
+				accepting = false
+			} else {
+				log.Println("Accepting connections")
+				die = make(chan struct{}, 1)
+				go accept(l, die)
+				accepting = true
+			}
+		} else if sig == syscall.SIGINT || sig == syscall.SIGKILL || sig == syscall.SIGTERM {
+			l.Close()
+			return
 		}
 	}
 }
