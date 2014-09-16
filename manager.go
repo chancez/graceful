@@ -14,16 +14,16 @@ func NewListenerManager() *ListenerManager {
 	return &ListenerManager{m: make(map[string]net.Listener)}
 }
 
-func (m *ListenerManager) Get(addr string) (l net.Listener) {
+func (m *ListenerManager) Get(lnet, laddr string) (l net.Listener) {
 	m.RLock()
-	l = m.m[addr]
+	l = m.m[lnet+laddr]
 	m.RUnlock()
 	return
 }
 
-func (m *ListenerManager) Set(addr string, l net.Listener) {
+func (m *ListenerManager) Set(lnet, laddr string, l net.Listener) {
 	m.Lock()
-	m.m[addr] = l
+	m.m[lnet+laddr] = l
 	m.Unlock()
 	return
 }
@@ -37,6 +37,10 @@ func (m *ListenerManager) Listeners() []net.Listener {
 }
 
 func (m *ListenerManager) Listen(lnet, laddr string) (net.Listener, error) {
+	l := m.Get(lnet, laddr)
+	if l != nil {
+		return l, nil
+	}
 	return NewListener(lnet, laddr, m)
 }
 
@@ -45,8 +49,7 @@ func NewListener(lnet, laddr string, m *ListenerManager) (l net.Listener, err er
 	if err != nil {
 		return
 	}
-	addr := l.Addr().String()
-	m.Set(addr, l)
+	m.Set(lnet, laddr, l)
 	return
 }
 
